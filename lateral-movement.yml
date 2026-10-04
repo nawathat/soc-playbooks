@@ -1,0 +1,66 @@
+name: Lateral Movement Containment Playbook
+version: "1.0"
+author: SOC Team - smebank.co.th
+last_updated: 2026-10-04
+mitre_technique: T1021
+severity_threshold: HIGH
+
+detection:
+  rule_name: "Lateral Movement Detection"
+  conditions:
+    - field: tool_detected
+      operator: "in"
+      value: ["PsExec", "WMI", "SMB", "RDP", "WinRM"]
+    - field: sequential_host_connections
+      operator: "greater_than"
+      value: 3
+    - field: timespan_minutes
+      operator: "less_than"
+      value: 30
+
+enrichment_steps:
+  - name: Movement Mapping
+    action: map_lateral_movement
+    output: source_host, target_hosts, technique_used, timeline
+
+  - name: Credential Analysis
+    action: analyze_credential_usage
+    output: credentials_used, privilege_level, stolen_credentials
+
+  - name: Asset Classification
+    action: classify_target_assets
+    output: asset_criticality, data_sensitivity
+
+response_steps:
+  automatic:
+    - step: 1
+      name: "Block Lateral Movement Tools"
+      action: block_process_execution
+      processes: ["psexec.exe", "wmic.exe"]
+      tool: "CortexXDR"
+
+    - step: 2
+      name: "Revoke Compromised Credentials"
+      condition: "stolen_credentials == TRUE"
+      action: reset_password_and_invalidate_sessions
+      method: "Force AD password reset + Kerberos ticket purge"
+
+  manual:
+    - step: 3
+      name: "Isolate Compromised Systems"
+      action: segment_network
+      targets: all_affected_hosts
+
+    - step: 4
+      name: "Hunt for Persistence"
+      action: threat_hunt
+      focus: [scheduled_tasks, registry_run_keys, new_services, startup_folders]
+
+escalation:
+  condition: "target_host_criticality == 'CRITICAL' OR domain_controller_reached == TRUE"
+  escalate_to: [CISO, IT_Director]
+  sla_minutes: 20
+
+xsoar_integration:
+  playbook_name: "Lateral Movement - Containment"
+  incident_type: "Lateral Movement"

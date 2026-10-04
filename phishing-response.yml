@@ -1,0 +1,96 @@
+name: Phishing Response Playbook
+version: "1.2"
+author: SOC Team - smebank.co.th
+last_updated: 2026-10-04
+mitre_technique: T1566
+severity_threshold: MEDIUM
+
+detection:
+  rules:
+    - name: "Spearphishing Attachment"
+      mitre: "T1566.001"
+      indicators:
+        - malicious_macro_executed: true
+        - sandbox_detonation: confirmed
+        - file_extension: [".doc", ".xls", ".xlsm", ".docm"]
+
+    - name: "Spearphishing Link"
+      mitre: "T1566.002"
+      indicators:
+        - phishing_url_clicked: true
+        - credential_harvesting_page: detected
+        - newly_registered_domain: true
+
+    - name: "Spearphishing via Service"
+      mitre: "T1566.003"
+      indicators:
+        - malicious_link_in_service: true
+        - service: ["Teams", "SharePoint", "OneDrive"]
+
+enrichment_steps:
+  - name: Email Header Analysis
+    action: analyze_email_headers
+    output: sender_domain, reply_to, spoofed_sender, dkim_result, spf_result
+
+  - name: URL/Attachment Analysis
+    action: detonate_in_sandbox
+    providers: ["Palo Alto WildFire", "Any.run"]
+    output: malware_detected, behavior_summary, ioc_list, family_name
+
+  - name: Recipient Impact Assessment
+    action: find_all_recipients
+    output: recipients_list, credentials_entered, clicked_link
+
+response_steps:
+  automatic:
+    - step: 1
+      name: "Block Phishing URL/Domain"
+      action: block_url_and_domain
+      firewall: "Palo Alto Panorama"
+      dns_sinkhole: true
+      duration: "permanent"
+
+    - step: 2
+      name: "Quarantine Phishing Email"
+      action: quarantine_email
+      tool: "Microsoft Defender for O365"
+      scope: "all_recipients"
+
+    - step: 3
+      name: "Block Malicious Attachment Hash"
+      action: block_file_hash
+      tool: "CortexXDR"
+      scope: "all_endpoints"
+
+  manual:
+    - step: 4
+      name: "User Notification"
+      action: notify_affected_users
+      template: "Security Alert: Phishing email detected - Do not click links or open attachments from this sender"
+
+    - step: 5
+      name: "Credential Reset (if compromised)"
+      condition: "credentials_entered == TRUE"
+      action: force_password_reset_and_mfa
+      method: "Azure AD - Bulk password reset + MFA registration reset"
+
+    - step: 6
+      name: "Endpoint Scan"
+      action: trigger_full_endpoint_scan
+      tool: "CortexXDR"
+      targets: all_affected_endpoints
+
+escalation:
+  condition: "credentials_entered == TRUE OR malware_executed == TRUE"
+  escalate_to: [CISO, IT_Director, HR]
+  sla_minutes: 30
+
+awareness:
+  action: send_phishing_awareness_reminder
+  recipients: all_staff
+  frequency: post_incident
+
+xsoar_integration:
+  playbook_name: "Phishing Response - Email"
+  incident_type: "Phishing"
+  auto_quarantine: true

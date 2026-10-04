@@ -1,0 +1,73 @@
+name: Data Exfiltration Detection Playbook
+version: "1.0"
+author: SOC Team - smebank.co.th
+last_updated: 2026-10-04
+mitre_technique: T1567
+severity_threshold: HIGH
+
+detection:
+  rule_name: "Unusual Data Transfer"
+  conditions:
+    - field: bytes_transferred
+      operator: "greater_than"
+      value: 1073741824  # 1GB
+    - field: destination_type
+      operator: "equals"
+      value: "external"
+  time_conditions:
+    - outside_business_hours: true
+      timezone: Asia/Bangkok
+      business_hours: "08:00-18:00"
+      weekdays_only: true
+
+enrichment_steps:
+  - name: Destination Classification
+    action: classify_destination
+    input: destination_ip
+    output: cloud_provider, service_type, reputation_score
+
+  - name: User Baseline
+    action: get_user_baseline
+    input: username
+    timespan_days: 30
+    output: avg_daily_transfer, typical_hours, typical_destinations
+
+  - name: Data Classification
+    action: scan_transferred_content
+    method: DLP_tags
+    output: data_classification, contains_pii, contains_financial
+
+response_steps:
+  automatic:
+    - step: 1
+      name: "Capture Network Session"
+      action: capture_pcap
+      duration_minutes: 5
+      storage: evidence_vault
+
+    - step: 2
+      name: "Block Destination"
+      condition: "data_classification IN ['CONFIDENTIAL', 'RESTRICTED']"
+      action: block_ip_or_domain
+      firewall: "Palo Alto Panorama"
+
+  manual:
+    - step: 3
+      name: "Manager Notification"
+      action: notify_manager
+      template: "Employee {username} transferred {bytes_gb}GB of data outside business hours. Investigation required."
+
+    - step: 4
+      name: "Legal Hold"
+      condition: "contains_financial == TRUE OR data_classification == 'RESTRICTED'"
+      action: create_legal_hold
+      systems: [SharePoint, Exchange, OneDrive]
+
+escalation:
+  condition: "data_classification == 'RESTRICTED' OR bytes_transferred >= 5368709120"
+  escalate_to: [CISO, Legal, HR]
+  sla_minutes: 30
+
+xsoar_integration:
+  playbook_name: "Data Exfiltration - Full Investigation"
+  incident_type: "Data Exfiltration"

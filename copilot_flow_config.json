@@ -1,0 +1,213 @@
+{
+  "copilotName": "SOC Assistant Bot",
+  "description": "AI-powered Security Operations Center assistant for SME Bank",
+  "language": "en-th",
+  "topics": [
+    {
+      "id": "alert_inquiry",
+      "name": "Alert Investigation",
+      "triggerPhrases": [
+        "What is alert",
+        "Tell me about alert",
+        "Alert ID",
+        "Show alert",
+        "alert คืออะไร",
+        "ดู alert"
+      ],
+      "steps": [
+        {
+          "type": "message",
+          "text": "Let me look up that alert for you. One moment... 🔍"
+        },
+        {
+          "type": "action",
+          "name": "FetchAlertFromFabric",
+          "inputMapping": {
+            "alertId": "{TriggerEntities.alertId}"
+          },
+          "outputMapping": {
+            "alertDetails": "alertDetails"
+          }
+        },
+        {
+          "type": "action",
+          "name": "CallAIFoundryForAnalysis",
+          "inputMapping": {
+            "alertData": "{alertDetails}"
+          },
+          "outputMapping": {
+            "aiSummary": "aiAnalysis",
+            "recommendations": "recommendedActions"
+          }
+        },
+        {
+          "type": "action",
+          "name": "GetPlaybookFromGitHub",
+          "inputMapping": {
+            "mitreId": "{alertDetails.mitre_id}",
+            "threatType": "{alertDetails.threat_type}"
+          },
+          "outputMapping": {
+            "playbookSteps": "playbookResponse"
+          }
+        },
+        {
+          "type": "adaptiveCard",
+          "template": "AlertDetailCard",
+          "data": {
+            "alertId": "{alertDetails.alert_id}",
+            "severity": "{alertDetails.severity}",
+            "riskScore": "{alertDetails.risk_score}",
+            "threatType": "{alertDetails.threat_type}",
+            "description": "{alertDetails.description}",
+            "aiSummary": "{aiAnalysis}",
+            "mitreId": "{alertDetails.mitre_id}",
+            "mitreTechnique": "{alertDetails.mitre_technique}",
+            "recommendedActions": "{recommendedActions}",
+            "playbookLink": "{playbookResponse.github_url}"
+          }
+        }
+      ]
+    },
+    {
+      "id": "execute_response",
+      "name": "Execute Remediation",
+      "triggerPhrases": [
+        "Execute response",
+        "Disable account",
+        "Block IP",
+        "Isolate machine",
+        "Run playbook",
+        "ปิดบัญชี",
+        "บล็อก IP"
+      ],
+      "steps": [
+        {
+          "type": "confirmationCard",
+          "message": "⚠️ You're about to execute: **{action}** for alert {alertId}. This action cannot be undone. Confirm?",
+          "buttons": ["Confirm", "Cancel"]
+        },
+        {
+          "type": "condition",
+          "expression": "{UserConfirmed} == 'Confirm'",
+          "trueSteps": [
+            {
+              "type": "action",
+              "name": "TriggerXSOARPlaybook",
+              "inputMapping": {
+                "alertId": "{currentAlertId}",
+                "action": "{requestedAction}",
+                "analyst": "{User.Email}"
+              },
+              "outputMapping": {
+                "xsoarIncidentId": "xsoarResult"
+              }
+            },
+            {
+              "type": "message",
+              "text": "✅ Action executed! XSOAR Incident #{xsoarResult.incident_id} created. Response in progress...\n\n📧 Notification sent to security team."
+            }
+          ],
+          "falseSteps": [
+            {
+              "type": "message",
+              "text": "Action cancelled. The alert remains in 'In Review' status."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "false_positive",
+      "name": "Mark False Positive",
+      "triggerPhrases": [
+        "false positive",
+        "this is normal",
+        "not a threat",
+        "FP",
+        "ไม่ใช่ภัย"
+      ],
+      "steps": [
+        {
+          "type": "action",
+          "name": "AnalyzeFalsePositive",
+          "inputMapping": {
+            "alertId": "{currentAlertId}",
+            "reason": "{UserExplanation}"
+          }
+        },
+        {
+          "type": "message",
+          "text": "📝 I've analyzed why this might be a false positive:\n\n{fpAnalysis.reasons}\n\n**Suggested rule tuning:** {fpAnalysis.ruleSuggestion}\n\nShall I create a GitHub issue for rule tuning? [Yes/No]"
+        }
+      ]
+    },
+    {
+      "id": "threat_summary",
+      "name": "Daily Threat Summary",
+      "triggerPhrases": [
+        "Today's threats",
+        "Daily summary",
+        "What happened today",
+        "Latest alerts",
+        "สรุปภัยคุกคาม",
+        "alerts วันนี้"
+      ],
+      "steps": [
+        {
+          "type": "action",
+          "name": "GetDailySummary",
+          "inputMapping": {
+            "hoursBack": 24
+          }
+        },
+        {
+          "type": "adaptiveCard",
+          "template": "DailySummaryCard",
+          "data": {
+            "totalAlerts": "{summary.total}",
+            "criticalCount": "{summary.critical}",
+            "highCount": "{summary.high}",
+            "topThreat": "{summary.top_threat}",
+            "topDepartment": "{summary.riskiest_department}",
+            "mttr": "{summary.avg_resolve_minutes}"
+          }
+        }
+      ]
+    }
+  ],
+  "connections": {
+    "fabric": {
+      "type": "CustomConnector",
+      "baseUrl": "https://your-fabric-workspace.fabric.microsoft.com/api",
+      "authType": "AzureAD",
+      "endpoints": {
+        "getAlert": "GET /soc_alerts/{alertId}",
+        "getDailySummary": "GET /soc_alerts/summary?hours={hours}",
+        "updateAlertStatus": "PATCH /soc_alerts/{alertId}"
+      }
+    },
+    "xsoar": {
+      "type": "CustomConnector",
+      "baseUrl": "https://xsoar.smebank.co.th",
+      "authType": "APIKey",
+      "endpoints": {
+        "createIncident": "POST /incident",
+        "getIncident": "GET /incident/{id}",
+        "runPlaybook": "POST /playbook/run"
+      }
+    },
+    "aiFoundry": {
+      "type": "AzureAIFoundry",
+      "endpoint": "https://your-ai-foundry.openai.azure.com",
+      "deploymentName": "soc-gpt4o",
+      "systemPrompt": "You are a SOC expert assistant. Analyze security alerts and provide actionable recommendations in clear, concise language. Always include MITRE ATT&CK context and recommended response steps."
+    },
+    "github": {
+      "type": "GitHub",
+      "repo": "smebank-soc/soc-playbooks",
+      "branch": "main",
+      "playbooksPath": "playbooks/"
+    }
+  }
+}

@@ -1,0 +1,107 @@
+name: Brute Force Detection Playbook
+version: "1.2"
+author: SOC Team - smebank.co.th
+last_updated: 2026-10-04
+mitre_technique: T1110
+severity_threshold: HIGH
+
+detection:
+  rule_name: "Multiple Failed Logins"
+  conditions:
+    - field: failed_logins
+      operator: "greater_than"
+      value: 5
+    - field: timespan_minutes
+      operator: "less_than"
+      value: 10
+  optional_conditions:
+    - field: source_country
+      operator: "not_in"
+      value: ["Thailand", "Singapore", "USA"]  # Approved countries
+    - field: target_account_type
+      operator: "equals"
+      value: "privileged"
+
+enrichment_steps:
+  - name: GeoIP Lookup
+    action: lookup_ip_geolocation
+    input: source_ip
+    output: source_country, source_city, source_isp
+
+  - name: Threat Intel Check
+    action: check_threat_intelligence
+    providers: ["VirusTotal", "AbuseIPDB", "Shodan"]
+    input: source_ip
+    output: threat_score, known_malicious, categories
+
+  - name: Account Context
+    action: get_ad_account_info
+    input: username
+    output: mfa_enabled, last_password_change, group_memberships, account_status
+
+  - name: Historical Activity
+    action: query_siem
+    query: "SELECT * FROM auth_logs WHERE username = ? AND result = 'SUCCESS' ORDER BY timestamp DESC LIMIT 10"
+    output: recent_successful_logins
+
+response_steps:
+  automatic:
+    - step: 1
+      name: "Lock Account Temporarily"
+      condition: "risk_score >= 90 OR source_country IN ['North Korea', 'Iran', 'Russia']"
+      action: disable_ad_account
+      duration_minutes: 60
+      notify: [security-team@smebank.co.th, user@smebank.co.th]
+
+    - step: 2
+      name: "Block Source IP"
+      condition: "threat_intel_score >= 80 OR failed_logins >= 20"
+      action: block_ip_firewall
+      firewall: "Palo Alto Panorama"
+      duration_hours: 24
+
+  manual:
+    - step: 3
+      name: "Verify with User"
+      action: send_notification
+      channel: MS_Teams
+      template: "Suspicious login detected on your account from {source_country}. Was this you? Reply YES/NO."
+      timeout_minutes: 30
+
+    - step: 4
+      name: "Enable MFA if Missing"
+      condition: "mfa_enabled == FALSE"
+      action: enforce_mfa
+      method: Microsoft_Authenticator
+
+    - step: 5
+      name: "Review Recent Activity"
+      action: generate_activity_report
+      timespan_hours: 24
+      output: activity_report
+
+escalation:
+  condition: "risk_score >= 95 OR mitre_technique IN ['T1078', 'T1110'] AND confirmed_breach == TRUE"
+  escalate_to: CISO
+  method: [phone, email, Teams]
+  sla_minutes: 15
+
+xsoar_integration:
+  playbook_name: "Palo Alto XSOAR - Brute Force Response"
+  incident_type: "Authentication Attack"
+  severity_mapping:
+    CRITICAL: 4
+    HIGH: 3
+    MEDIUM: 2
+    LOW: 1
+
+false_positive_indicators:
+  - "User confirmed travel to source country"
+  - "Approved penetration testing activity"
+  - "Scheduled system scanning"
+  - "User recently changed country (VPN)"
+
+notes: |
+  This playbook handles brute force attacks detected by QRadar (T1110) and Cortex XDR.
+  For SME Bank context, Finance and Operations accounts require immediate escalation.
+  Coordinate with IT before auto-disabling service accounts.

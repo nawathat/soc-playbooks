@@ -1,0 +1,96 @@
+name: Ransomware Containment Playbook
+version: "2.0"
+author: SOC Team - smebank.co.th
+last_updated: 2026-10-04
+mitre_technique: T1486
+severity_threshold: CRITICAL
+
+detection:
+  rule_name: "Ransomware Behavior"
+  conditions:
+    - field: shadow_copy_deletion
+      operator: "detected"
+    - field: mass_file_encryption
+      operator: "detected"
+    - field: file_extension_change
+      operator: "mass_rename"
+  indicators:
+    - "vssadmin delete shadows"
+    - "bcdedit /set recoveryenabled No"
+    - "wbadmin delete catalog"
+
+enrichment_steps:
+  - name: Scope Assessment
+    action: identify_affected_systems
+    output: affected_hosts, encrypted_files_count, encryption_start_time
+
+  - name: Patient Zero Identification
+    action: trace_infection_origin
+    output: initial_vector, first_infected_host, lateral_movement_path
+
+  - name: Threat Intelligence
+    action: check_ransomware_family
+    providers: ["VirusTotal", "ID Ransomware", "MalwareBazaar"]
+    output: ransomware_family, decryption_available, ioc_list
+
+response_steps:
+  automatic:
+    - step: 1
+      name: "Immediate Network Isolation"
+      action: isolate_network_segment
+      scope: "affected_vlan"
+      method: "Palo Alto - Quarantine VLAN"
+      priority: CRITICAL
+
+    - step: 2
+      name: "Endpoint Isolation"
+      action: isolate_endpoint
+      tool: "CortexXDR"
+      targets: all_affected_hosts
+
+    - step: 3
+      name: "Disable Affected Accounts"
+      action: disable_ad_accounts
+      targets: all_accounts_on_affected_hosts
+
+    - step: 4
+      name: "Block C2 Communication"
+      action: block_c2_traffic
+      firewall: "Palo Alto Panorama"
+
+  manual:
+    - step: 5
+      name: "Backup Assessment"
+      action: verify_backup_integrity
+      systems: [Veeam, Azure Backup, SharePoint]
+      check: "Identify last clean backup before encryption"
+
+    - step: 6
+      name: "Evidence Preservation"
+      action: preserve_forensic_evidence
+      collect: [memory_dump, disk_image, network_captures, event_logs]
+
+    - step: 7
+      name: "Stakeholder Notification"
+      action: notify_stakeholders
+      recipients: [CISO, CEO, Legal, IT_Director, BOT_Thailand]
+      template: "Critical ransomware incident - immediate attention required"
+
+escalation:
+  immediate: true
+  escalate_to: [CISO, CEO, Legal, BOT_Regulatory_Team]
+  method: [phone, email, Teams]
+  sla_minutes: 5
+
+recovery:
+  steps:
+    - "Verify backup integrity"
+    - "Restore from last clean backup"
+    - "Patch vulnerability used for initial access"
+    - "Deploy enhanced monitoring"
+    - "Conduct post-incident review"
+
+xsoar_integration:
+  playbook_name: "Ransomware Response - Enterprise"
+  incident_type: "Ransomware"
+  auto_isolate: true

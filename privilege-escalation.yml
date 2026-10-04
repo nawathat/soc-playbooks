@@ -1,0 +1,65 @@
+name: Privilege Escalation Investigation Playbook
+version: "1.0"
+author: SOC Team - smebank.co.th
+last_updated: 2026-10-04
+mitre_technique: T1078
+severity_threshold: HIGH
+
+detection:
+  rule_name: "Privilege Escalation / Valid Account Abuse"
+  conditions:
+    - field: account_type
+      operator: "in"
+      value: ["admin", "service_account", "privileged"]
+    - field: login_time
+      operator: "outside_business_hours"
+    - field: source_ip
+      operator: "new_location"
+
+enrichment_steps:
+  - name: Account Investigation
+    action: get_full_account_history
+    output: creation_date, last_password_change, group_memberships, recent_logins
+
+  - name: Privilege Review
+    action: check_privilege_changes
+    timespan_hours: 24
+    output: privilege_changes, new_group_assignments
+
+  - name: Access Pattern Analysis
+    action: compare_to_baseline
+    output: deviation_score, unusual_resources_accessed
+
+response_steps:
+  automatic:
+    - step: 1
+      name: "Revoke Elevated Access"
+      condition: "deviation_score >= 80"
+      action: remove_from_privileged_groups
+      notify: [IT_Admin, CISO]
+
+    - step: 2
+      name: "Force MFA Re-authentication"
+      action: revoke_mfa_sessions
+      method: "Azure AD - Revoke all tokens"
+
+  manual:
+    - step: 3
+      name: "HR Verification"
+      action: verify_with_hr_and_manager
+      template: "Verify if {username} requires elevated access for business purpose"
+
+    - step: 4
+      name: "Audit Access Logs"
+      action: pull_access_logs
+      timespan_hours: 72
+      output: accessed_systems, data_accessed
+
+escalation:
+  condition: "account_type == 'service_account' AND accessed_critical_system == TRUE"
+  escalate_to: [CISO, IT_Director, HR]
+  sla_minutes: 30
+
+xsoar_integration:
+  playbook_name: "Privilege Escalation Investigation"
+  incident_type: "Access Control Violation"

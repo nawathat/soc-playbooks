@@ -1,0 +1,72 @@
+name: Command & Control Traffic Blocking Playbook
+version: "1.1"
+author: SOC Team - smebank.co.th
+last_updated: 2026-10-04
+mitre_technique: T1071
+severity_threshold: HIGH
+
+detection:
+  rules:
+    - name: "DNS C2 Detection"
+      mitre: "T1071.004"
+      indicators:
+        - high_entropy_dns_queries: true
+        - unusually_large_txt_records: true
+        - dga_pattern_detected: true
+
+    - name: "HTTP/HTTPS C2 Detection"
+      mitre: "T1071.001"
+      indicators:
+        - beaconing_interval: regular
+        - known_c2_framework_signatures: ["Cobalt Strike", "Metasploit", "Empire"]
+
+enrichment_steps:
+  - name: IOC Intelligence
+    action: lookup_ioc
+    providers: ["VirusTotal", "Palo Alto ThreatVault", "Recorded Future"]
+    output: threat_actor, campaign, malware_family, confidence_score
+
+  - name: Traffic Analysis
+    action: analyze_c2_traffic
+    output: protocol, beaconing_interval, payload_size, encryption_used
+
+response_steps:
+  automatic:
+    - step: 1
+      name: "Block C2 Domain/IP"
+      action: block_destination
+      firewall: "Palo Alto Panorama"
+      dns_sinkhole: true
+      duration: "permanent"
+
+    - step: 2
+      name: "DNS Sinkhole"
+      action: configure_dns_sinkhole
+      target: malicious_domain
+      sinkhole_ip: "10.0.0.100"
+
+    - step: 3
+      name: "Capture C2 Traffic"
+      action: capture_pcap
+      duration_minutes: 10
+      storage: evidence_vault
+
+  manual:
+    - step: 4
+      name: "Identify Infected Hosts"
+      action: find_all_c2_communicators
+      timespan_hours: 72
+
+    - step: 5
+      name: "Malware Removal"
+      action: coordinate_with_endpoint_team
+      tool: "CortexXDR"
+
+escalation:
+  condition: "confidence_score >= 90 AND affected_hosts >= 5"
+  escalate_to: [CISO, IT_Director]
+  sla_minutes: 15
+
+xsoar_integration:
+  playbook_name: "C2 Traffic Block and Hunt"
+  incident_type: "Command and Control"
